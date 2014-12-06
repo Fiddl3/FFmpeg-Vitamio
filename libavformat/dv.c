@@ -32,7 +32,7 @@
 #include "avformat.h"
 #include "internal.h"
 #include "libavcodec/dv_profile.h"
-#include "libavcodec/dvdata.h"
+#include "libavcodec/dv.h"
 #include "libavutil/channel_layout.h"
 #include "libavutil/intreadwrite.h"
 #include "libavutil/mathematics.h"
@@ -72,30 +72,33 @@ static inline uint16_t dv_audio_12to16(uint16_t sample)
     return result;
 }
 
-/*
- * This is the dumbest implementation of all -- it simply looks at
- * a fixed offset and if pack isn't there -- fails. We might want
- * to have a fallback mechanism for complete search of missing packs.
- */
 static const uint8_t *dv_extract_pack(uint8_t *frame, enum dv_pack_type t)
 {
     int offs;
+    int c;
 
-    switch (t) {
-    case dv_audio_source:
-        offs = (80 * 6 + 80 * 16 * 3 + 3);
-        break;
-    case dv_audio_control:
-        offs = (80 * 6 + 80 * 16 * 4 + 3);
-        break;
-    case dv_video_control:
-        offs = (80 * 5 + 48 + 5);
-        break;
-    case dv_timecode:
-        offs = (80*1 + 3 + 3);
-        break;
-    default:
-        return NULL;
+    for (c = 0; c < 10; c++) {
+        switch (t) {
+        case dv_audio_source:
+            if (c&1)    offs = (80 * 6 + 80 * 16 * 0 + 3 + c*12000);
+            else        offs = (80 * 6 + 80 * 16 * 3 + 3 + c*12000);
+            break;
+        case dv_audio_control:
+            if (c&1)    offs = (80 * 6 + 80 * 16 * 1 + 3 + c*12000);
+            else        offs = (80 * 6 + 80 * 16 * 4 + 3 + c*12000);
+            break;
+        case dv_video_control:
+            if (c&1)    offs = (80 * 3 + 8      + c*12000);
+            else        offs = (80 * 5 + 48 + 5 + c*12000);
+            break;
+        case dv_timecode:
+            offs = (80*1 + 3 + 3);
+            break;
+        default:
+            return NULL;
+        }
+        if (frame[offs] == t)
+            break;
     }
 
     return frame[offs] == t ? &frame[offs] : NULL;
@@ -582,31 +585,37 @@ static int dv_read_close(AVFormatContext *s)
 
 static int dv_probe(AVProbeData *p)
 {
-    unsigned state, marker_pos = 0;
+    unsigned marker_pos = 0;
     int i;
     int matches           = 0;
+    int firstmatch        = 0;
     int secondary_matches = 0;
 
     if (p->buf_size < 5)
         return 0;
 
-    state = AV_RB32(p->buf);
-    for (i = 4; i < p->buf_size; i++) {
-        if ((state & 0xffffff7f) == 0x1f07003f)
-            matches++;
-        // any section header, also with seq/chan num != 0,
-        // should appear around every 12000 bytes, at least 10 per frame
-        if ((state & 0xff07ff7f) == 0x1f07003f)
-            secondary_matches++;
-        if (state == 0x003f0700 || state == 0xff3f0700)
-            marker_pos = i;
-        if (state == 0xff3f0701 && i - marker_pos == 80)
-            matches++;
-        state = (state << 8) | p->buf[i];
+    for (i = 0; i < p->buf_size-4; i++) {
+        unsigned state = AV_RB32(p->buf+i);
+        if ((state & 0x0007f840) == 0x00070000) {
+            // any section header, also with seq/chan num != 0,
+            // should appear around every 12000 bytes, at least 10 per frame
+            if ((state & 0xff07ff7f) == 0x1f07003f) {
+                secondary_matches++;
+                if ((state & 0xffffff7f) == 0x1f07003f) {
+                    matches++;
+                    if (!i)
+                        firstmatch = 1;
+                }
+            }
+            if (state == 0x003f0700 || state == 0xff3f0700)
+                marker_pos = i;
+            if (state == 0xff3f0701 && i - marker_pos == 80)
+                matches++;
+        }
     }
 
     if (matches && p->buf_size / matches < 1024 * 1024) {
-        if (matches > 4 ||
+        if (matches > 4 || firstmatch ||
             (secondary_matches >= 10 &&
              p->buf_size / secondary_matches < 24000))
             // not max to avoid dv in mov to match

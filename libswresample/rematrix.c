@@ -127,6 +127,11 @@ av_cold static int auto_matrix(SwrContext *s)
     )
         out_ch_layout = AV_CH_LAYOUT_STEREO;
 
+    if(    in_ch_layout == AV_CH_LAYOUT_STEREO_DOWNMIX
+       && (out_ch_layout & AV_CH_LAYOUT_STEREO_DOWNMIX) == 0
+    )
+        in_ch_layout = AV_CH_LAYOUT_STEREO;
+
     if(!sane_layout(in_ch_layout)){
         av_get_channel_layout_string(buf, sizeof(buf), -1, s->in_ch_layout);
         av_log(s, AV_LOG_ERROR, "Input channel layout '%s' is not supported\n", buf);
@@ -433,8 +438,8 @@ int swri_rematrix(SwrContext *s, AudioData *out, AudioData *in, int len, int mus
         off = len1 * out->bps;
     }
 
-    av_assert0(out->ch_count == av_get_channel_layout_nb_channels(s->out_ch_layout));
-    av_assert0(in ->ch_count == av_get_channel_layout_nb_channels(s-> in_ch_layout));
+    av_assert0(!s->out_ch_layout || out->ch_count == av_get_channel_layout_nb_channels(s->out_ch_layout));
+    av_assert0(!s-> in_ch_layout || in ->ch_count == av_get_channel_layout_nb_channels(s-> in_ch_layout));
 
     for(out_i=0; out_i<out->ch_count; out_i++){
         switch(s->matrix_ch[out_i][0]){

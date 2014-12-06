@@ -51,6 +51,7 @@
 #include "fft.h"
 #include "internal.h"
 #include "sinewin.h"
+#include "unary.h"
 
 #include "cookdata.h"
 
@@ -331,11 +332,7 @@ static void decode_gain_info(GetBitContext *gb, int *gaininfo)
 {
     int i, n;
 
-    while (get_bits1(gb)) {
-        /* NOTHING */
-    }
-
-    n = get_bits_count(gb) - 1;     // amount of elements*2 to update
+    n = get_unary(gb, 0, get_bits_left(gb));     // amount of elements*2 to update
 
     i = 0;
     while (n--) {
@@ -1217,8 +1214,8 @@ static av_cold int cook_decode_init(AVCodecContext *avctx)
 
         q->num_subpackets++;
         s++;
-        if (s > MAX_SUBPACKETS) {
-            avpriv_request_sample(avctx, "subpackets > %d", MAX_SUBPACKETS);
+        if (s > FFMIN(MAX_SUBPACKETS, avctx->block_align)) {
+            avpriv_request_sample(avctx, "subpackets > %d", FFMIN(MAX_SUBPACKETS, avctx->block_align));
             return AVERROR_PATCHWELCOME;
         }
     }

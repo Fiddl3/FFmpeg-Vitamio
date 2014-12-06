@@ -67,6 +67,8 @@ static int mp3_read_probe(AVProbeData *p)
 
     for(; buf < end; buf= buf2+1) {
         buf2 = buf;
+        if(ff_mpa_check_header(AV_RB32(buf2)))
+            continue;
 
         for(frames = 0; buf2 < end; frames++) {
             header = AV_RB32(buf2);
@@ -163,6 +165,10 @@ static int mp3_parse_vbr_tags(AVFormatContext *s, AVStream *st, int64_t base)
             mp3->start_pad = v>>12;
             mp3->  end_pad = v&4095;
             st->skip_samples = mp3->start_pad + 528 + 1;
+            if (!st->start_time)
+                st->start_time = av_rescale_q(st->skip_samples,
+                                              (AVRational){1, c.sample_rate},
+                                              st->time_base);
             av_log(s, AV_LOG_DEBUG, "pad %d %d\n", mp3->start_pad, mp3->  end_pad);
         }
     }
@@ -289,6 +295,8 @@ static int mp3_seek(AVFormatContext *s, int stream_index, int64_t timestamp,
     int64_t ret  = av_index_search_timestamp(st, timestamp, flags);
     int i, j;
     int dir = (flags&AVSEEK_FLAG_BACKWARD) ? -1 : 1;
+    int64_t best_pos;
+    int best_score;
 
     if (mp3->is_cbr && st->duration > 0 && mp3->header_filesize > s->data_offset) {
         int64_t filesize = avio_size(s->pb);
@@ -312,26 +320,37 @@ static int mp3_seek(AVFormatContext *s, int stream_index, int64_t timestamp,
         return -1;
     }
 
+    avio_seek(s->pb, FFMAX(ie->pos - 4096, 0), SEEK_SET);
     ret = avio_seek(s->pb, ie->pos, SEEK_SET);
     if (ret < 0)
         return ret;
 
 #define MIN_VALID 3
+    best_pos = ie->pos;
+    best_score = 999;
     for(i=0; i<4096; i++) {
-        int64_t pos = ie->pos + i*dir;
+        int64_t pos = ie->pos + (dir > 0 ? i - 1024 : -i);
+        int64_t candidate = -1;
+        int score = 999;
         for(j=0; j<MIN_VALID; j++) {
             ret = check(s, pos);
             if(ret < 0)
                 break;
+            if ((ie->pos - pos)*dir <= 0 && abs(MIN_VALID/2-j) < score) {
+                candidate = pos;
+                score = abs(MIN_VALID/2-j);
+            }
             pos += ret;
         }
-        if(j==MIN_VALID)
-            break;
+        if (best_score > score && j == MIN_VALID) {
+            best_pos = candidate;
+            best_score = score;
+            if(score == 0)
+                break;
+        }
     }
-    if(j!=MIN_VALID)
-        i=0;
 
-    ret = avio_seek(s->pb, ie->pos + i*dir, SEEK_SET);
+    ret = avio_seek(s->pb, best_pos, SEEK_SET);
     if (ret < 0)
         return ret;
     ff_update_cur_dts(s, st, ie->timestamp);

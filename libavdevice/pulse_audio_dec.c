@@ -30,6 +30,7 @@
 #include <pulse/error.h>
 #include "libavformat/avformat.h"
 #include "libavformat/internal.h"
+#include "libavutil/time.h"
 #include "libavutil/opt.h"
 #include "pulse_audio_common.h"
 
@@ -47,6 +48,7 @@ typedef struct PulseData {
     pa_simple *s;
     int64_t pts;
     int64_t frame_duration;
+    int wallclock;
 } PulseData;
 
 static av_cold int pulse_read_header(AVFormatContext *s)
@@ -54,10 +56,10 @@ static av_cold int pulse_read_header(AVFormatContext *s)
     PulseData *pd = s->priv_data;
     AVStream *st;
     char *device = NULL;
-    int ret;
+    int ret, sample_bytes;
     enum AVCodecID codec_id =
         s->audio_codec_id == AV_CODEC_ID_NONE ? DEFAULT_CODEC_ID : s->audio_codec_id;
-    const pa_sample_spec ss = { codec_id_to_pulse_format(codec_id),
+    const pa_sample_spec ss = { ff_codec_id_to_pulse_format(codec_id),
                                 pd->sample_rate,
                                 pd->channels };
 
@@ -90,11 +92,17 @@ static av_cold int pulse_read_header(AVFormatContext *s)
     st->codec->codec_id    = codec_id;
     st->codec->sample_rate = pd->sample_rate;
     st->codec->channels    = pd->channels;
-    avpriv_set_pts_info(st, 64, 1, 1000000);  /* 64 bits pts in us */
+    avpriv_set_pts_info(st, 64, 1, pd->sample_rate);  /* 64 bits pts in us */
 
     pd->pts = AV_NOPTS_VALUE;
-    pd->frame_duration = (pd->frame_size * 1000000LL * 8) /
-        (pd->sample_rate * pd->channels * av_get_bits_per_sample(codec_id));
+    sample_bytes = (av_get_bits_per_sample(codec_id) >> 3) * pd->channels;
+
+    if (pd->frame_size % sample_bytes) {
+        av_log(s, AV_LOG_WARNING, "frame_size %i is not divisible by %i "
+            "(channels * bytes_per_sample) \n", pd->frame_size, sample_bytes);
+    }
+
+    pd->frame_duration = pd->frame_size / sample_bytes;
 
     return 0;
 }
@@ -103,7 +111,6 @@ static int pulse_read_packet(AVFormatContext *s, AVPacket *pkt)
 {
     PulseData *pd  = s->priv_data;
     int res;
-    pa_usec_t latency;
 
     if (av_new_packet(pkt, pd->frame_size) < 0) {
         return AVERROR(ENOMEM);
@@ -116,14 +123,18 @@ static int pulse_read_packet(AVFormatContext *s, AVPacket *pkt)
         return AVERROR(EIO);
     }
 
-    if ((latency = pa_simple_get_latency(pd->s, &res)) == (pa_usec_t) -1) {
-        av_log(s, AV_LOG_ERROR, "pa_simple_get_latency() failed: %s\n",
-               pa_strerror(res));
-        return AVERROR(EIO);
-    }
-
     if (pd->pts == AV_NOPTS_VALUE) {
+        pa_usec_t latency;
+
+        if ((latency = pa_simple_get_latency(pd->s, &res)) == (pa_usec_t) -1) {
+            av_log(s, AV_LOG_ERROR, "pa_simple_get_latency() failed: %s\n",
+                   pa_strerror(res));
+            return AVERROR(EIO);
+        }
+
         pd->pts = -latency;
+        if (pd->wallclock)
+            pd->pts += av_gettime();
     }
 
     pkt->pts = pd->pts;
@@ -151,6 +162,7 @@ static const AVOption options[] = {
     { "channels",      "set number of audio channels",                      OFFSET(channels),      AV_OPT_TYPE_INT,    {.i64 = 2},        1, INT_MAX, D },
     { "frame_size",    "set number of bytes per frame",                     OFFSET(frame_size),    AV_OPT_TYPE_INT,    {.i64 = 1024},     1, INT_MAX, D },
     { "fragment_size", "set buffering size, affects latency and cpu usage", OFFSET(fragment_size), AV_OPT_TYPE_INT,    {.i64 = -1},      -1, INT_MAX, D },
+    { "wallclock",     "set the initial pts using the current time",     OFFSET(wallclock),     AV_OPT_TYPE_INT,    {.i64 = 1},       -1, 1, D },
     { NULL },
 };
 

@@ -349,7 +349,8 @@ void ff_snow_pred_block(SnowContext *s, uint8_t *dst, uint8_t *tmp, ptrdiff_t st
         src += sx + sy*stride;
         if(   (unsigned)sx >= FFMAX(w - b_w - (HTAPS_MAX-2), 0)
            || (unsigned)sy >= FFMAX(h - b_h - (HTAPS_MAX-2), 0)){
-            s->vdsp.emulated_edge_mc(tmp + MB_SIZE, stride, src, stride,
+            s->vdsp.emulated_edge_mc(tmp + MB_SIZE, src,
+                                     stride, stride,
                                      b_w+HTAPS_MAX-1, b_h+HTAPS_MAX-1,
                                      sx, sy, w, h);
             src= tmp + MB_SIZE;
@@ -688,7 +689,7 @@ av_cold void ff_snow_common_end(SnowContext *s)
     for(i=0; i<MAX_REF_FRAMES; i++){
         av_freep(&s->ref_mvs[i]);
         av_freep(&s->ref_scores[i]);
-        if(s->last_picture[i]->data[0]) {
+        if(s->last_picture[i] && s->last_picture[i]->data[0]) {
             av_assert0(s->last_picture[i]->data[0] != s->current_picture->data[0]);
         }
         av_frame_free(&s->last_picture[i]);

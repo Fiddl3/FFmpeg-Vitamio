@@ -53,8 +53,10 @@ static int ape_tag_read_field(AVFormatContext *s)
         av_log(s, AV_LOG_WARNING, "Invalid APE tag key '%s'.\n", key);
         return -1;
     }
-    if (size >= UINT_MAX)
-        return -1;
+    if (size > INT32_MAX - FF_INPUT_BUFFER_PADDING_SIZE) {
+        av_log(s, AV_LOG_ERROR, "APE tag size too large.\n");
+        return AVERROR_INVALIDDATA;
+    }
     if (flags & APE_TAG_FLAG_IS_BINARY) {
         uint8_t filename[1024];
         enum AVCodecID id;
@@ -88,13 +90,8 @@ static int ape_tag_read_field(AVFormatContext *s)
             st->attached_pic.stream_index = st->index;
             st->attached_pic.flags       |= AV_PKT_FLAG_KEY;
         } else {
-            if (ff_alloc_extradata(st->codec, size))
+            if (ff_get_extradata(st->codec, s->pb, size) < 0)
                 return AVERROR(ENOMEM);
-            if (avio_read(pb, st->codec->extradata, size) != size) {
-                av_freep(&st->codec->extradata);
-                st->codec->extradata_size = 0;
-                return AVERROR(EIO);
-            }
             st->codec->codec_type = AVMEDIA_TYPE_ATTACHMENT;
         }
     } else {

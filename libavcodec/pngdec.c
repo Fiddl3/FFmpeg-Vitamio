@@ -226,7 +226,7 @@ static void png_filter_row(PNGDSPContext *dsp, uint8_t *dst, int filter_type,
         if (bpp == 4) {
             p = *(int*)dst;
             for (; i < size; i += bpp) {
-                int s = *(int*)(src + i);
+                unsigned s = *(int*)(src + i);
                 p = ((s & 0x7f7f7f7f) + (p & 0x7f7f7f7f)) ^ ((s ^ p) & 0x80808080);
                 *(int*)(dst + i) = p;
             }
@@ -633,7 +633,7 @@ static int decode_frame(AVCodecContext *avctx,
                 } else if ((s->bits_per_pixel == 1 || s->bits_per_pixel == 2 || s->bits_per_pixel == 4 || s->bits_per_pixel == 8) &&
                            s->color_type == PNG_COLOR_TYPE_PALETTE) {
                     avctx->pix_fmt = AV_PIX_FMT_PAL8;
-                } else if (s->bit_depth == 1) {
+                } else if (s->bit_depth == 1 && s->bits_per_pixel == 1) {
                     avctx->pix_fmt = AV_PIX_FMT_MONOBLACK;
                 } else if (s->bit_depth == 8 &&
                            s->color_type == PNG_COLOR_TYPE_GRAY_ALPHA) {
@@ -841,10 +841,11 @@ static int decode_frame(AVCodecContext *avctx,
             int i, j;
             uint8_t *pd      = p->data[0];
             uint8_t *pd_last = s->last_picture.f->data[0];
+            int ls = FFMIN(av_image_get_linesize(p->format, s->width, 0), s->width * s->bpp);
 
             ff_thread_await_progress(&s->last_picture, INT_MAX, 0);
             for (j = 0; j < s->height; j++) {
-                for (i = 0; i < s->width * s->bpp; i++) {
+                for (i = 0; i < ls; i++) {
                     pd[i] += pd_last[i];
                 }
                 pd      += s->image_linesize;

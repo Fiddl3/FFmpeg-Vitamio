@@ -318,7 +318,8 @@ static av_always_inline void add_yblock(SnowContext *s, int sliced, slice_buffer
         if(!sliced && !offset_dst)
             dst -= src_x;
         src_x=0;
-    }else if(src_x + b_w > w){
+    }
+    if(src_x + b_w > w){
         b_w = w - src_x;
     }
     if(src_y<0){
@@ -327,7 +328,8 @@ static av_always_inline void add_yblock(SnowContext *s, int sliced, slice_buffer
         if(!sliced && !offset_dst)
             dst -= src_y*dst_stride;
         src_y=0;
-    }else if(src_y + b_h> h){
+    }
+    if(src_y + b_h> h){
         b_h = h - src_y;
     }
 
@@ -653,7 +655,10 @@ static inline void unpack_coeffs(SnowContext *s, SubBand *b, SubBand * parent, i
                 if(v){
                     v= 2*(get_symbol2(&s->c, b->state[context + 2], context-4) + 1);
                     v+=get_rac(&s->c, &b->state[0][16 + 1 + 3 + ff_quant3bA[l&0xFF] + 3*ff_quant3bA[t&0xFF]]);
-
+                    if ((uint16_t)v != v) {
+                        av_log(s->avctx, AV_LOG_ERROR, "Coefficient damaged\n");
+                        v = 1;
+                    }
                     xc->x=x;
                     (xc++)->coeff= v;
                 }
@@ -663,6 +668,10 @@ static inline void unpack_coeffs(SnowContext *s, SubBand *b, SubBand * parent, i
                     else           run= INT_MAX;
                     v= 2*(get_symbol2(&s->c, b->state[0 + 2], 0-4) + 1);
                     v+=get_rac(&s->c, &b->state[0][16 + 1 + 3]);
+                    if ((uint16_t)v != v) {
+                        av_log(s->avctx, AV_LOG_ERROR, "Coefficient damaged\n");
+                        v = 1;
+                    }
 
                     xc->x=x;
                     (xc++)->coeff= v;
